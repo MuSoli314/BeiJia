@@ -1,0 +1,17 @@
+{
+  "timestamp": "2025-05-29 19:00:09",
+  "audio_file": "output1.mp3",
+  "recognized_text": "hi it's great to catch up again do you want to continue our discussion about the food you sold",
+  "audio_features": {
+    "duration": 7.89,
+    "speech_ratio": 0.539
+  },
+  "scores": {
+    "fluency": 71,
+    "completeness": 57,
+    "accuracy": 92,
+    "pronunciation": 69,
+    "overall": 72.2
+  },
+  "grade": "C"
+}
