@@ -1,3 +1,4 @@
+from logging import info
 import os
 import librosa
 import numpy as np
@@ -11,6 +12,8 @@ import re
 from typing import Dict, Tuple, List
 import warnings
 from language_tool_python import LanguageTool
+
+from utils.add_logs import setup_logger
 
 warnings.filterwarnings('ignore')
 
@@ -315,13 +318,13 @@ class EnglishAudioScorer:
             }
         }
     
-    def calculate_overall_score(self, pronunciation: Dict, fluency: Dict, authenticity: Dict) -> float:
+    def calculate_overall_score(self, pronunciation: Dict, fluency: Dict) -> float:
         """计算综合评分"""
         # 权重分配：发音30%，流利度40%，地道性30%
         overall_score = (
-            pronunciation['score'] * 0.3 +
-            fluency['score'] * 0.4 +
-            authenticity['score'] * 0.3
+            pronunciation['score'] * 0.4 +
+            fluency['score'] * 0.6
+            # authenticity['score'] * 0.3
         )
         return round(overall_score, 2)
     
@@ -337,14 +340,15 @@ class EnglishAudioScorer:
             return {'error': f'音频加载失败: {e}'}
         
         # 2. 语音转文本
-        try:
-            transcript = self.transcribe_audio(wav_path)
-            print(f"✓ 语音识别完成: {transcript[:50]}")
-        except Exception as e:
-            return {'error': f'语音识别失败: {e}'}
+        # try:
+        #     transcript = self.transcribe_audio(wav_path)
+        #     print(f"✓ 语音识别完成: {transcript[:50]}")
+        # except Exception as e:
+        #     return {'error': f'语音识别失败: {e}'}
         
-        if not transcript:
-            return {'error': '无法识别语音内容'}
+        # if not transcript:
+        #     return {'error': '无法识别语音内容'}
+        transcript = "Hello, you is a good man, you know."
         
         # 3. 文本语法检查
         try:
@@ -362,12 +366,12 @@ class EnglishAudioScorer:
             print(f"✓ 流利度分析完成: {fluency_result['score']:.1f}/100")
             # print(fluency_result)
             
-            authenticity_result = self.analyze_authenticity(transcript)
-            print(f"✓ 地道性分析完成: {authenticity_result['score']:.1f}/100")
+            # authenticity_result = self.analyze_authenticity(transcript)
+            # print(f"✓ 地道性分析完成: {authenticity_result['score']:.1f}/100")
             
             # 4. 计算综合评分
             overall_score = self.calculate_overall_score(
-                pronunciation_result, fluency_result, authenticity_result
+                pronunciation_result, fluency_result, # authenticity_result
             )
             
             return {
@@ -376,16 +380,16 @@ class EnglishAudioScorer:
                 'grammar_check': grammar_check,
                 'pronunciation': pronunciation_result,
                 'fluency': fluency_result,
-                'authenticity': authenticity_result,
+                # 'authenticity': authenticity_result,
                 'analysis_summary': self._generate_summary(
-                    overall_score, pronunciation_result, fluency_result, authenticity_result
+                    overall_score, pronunciation_result, fluency_result, # authenticity_result
                 )
             }
             
         except Exception as e:
             return {'error': f'分析过程出错: {e}'}
     
-    def _generate_summary(self, overall: float, pronunciation: Dict, fluency: Dict, authenticity: Dict) -> str:
+    def _generate_summary(self, overall: float, pronunciation: Dict, fluency: Dict) -> str:
         """生成评分总结"""
         if overall >= 85:
             level = "优秀"
@@ -401,7 +405,7 @@ class EnglishAudioScorer:
         summary = f"综合评分: {overall:.1f}/100 ({level})\n\n"
         summary += f"发音评分: {pronunciation['score']:.1f}/100\n"
         summary += f"流利度评分: {fluency['score']:.1f}/100\n"
-        summary += f"地道性评分: {authenticity['score']:.1f}/100\n\n"
+        # summary += f"地道性评分: {authenticity['score']:.1f}/100\n\n"
         
         # 改进建议
         suggestions = []
@@ -409,8 +413,8 @@ class EnglishAudioScorer:
             suggestions.append("建议加强发音练习，注意音调稳定性")
         if fluency['score'] < 70:
             suggestions.append(f"当前语速: {fluency['speaking_rate']:.0f} WPM，建议保持在150-180 WPM")
-        if authenticity['score'] < 70:
-            suggestions.append("建议增加词汇多样性，使用更自然的表达方式")
+        # if authenticity['score'] < 70:
+        #     suggestions.append("建议增加词汇多样性，使用更自然的表达方式")
         
         if suggestions:
             summary += "改进建议:\n" + "\n".join(f"• {s}" for s in suggestions)
@@ -420,7 +424,7 @@ class EnglishAudioScorer:
         return summary
 
 # 使用示例和备选方案
-def main():
+def en_audio_score():
     # 创建评分器实例
     try:
         scorer = EnglishAudioScorer()
@@ -435,7 +439,9 @@ def main():
     wav_file = "data/output.wav"  # 替换为实际的音频文件路径
     
     if os.path.exists(wav_file):
+        info("--1--")
         result = scorer.score_audio(wav_file)
+        info("--2--")
         
         if 'error' in result:
             print(f"错误: {result['error']}")
@@ -454,4 +460,4 @@ def main():
         print("print(result['analysis_summary'])")
 
 if __name__ == "__main__":
-    main()
+    en_audio_score()
