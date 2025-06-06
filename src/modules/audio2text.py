@@ -1,52 +1,57 @@
 from logging import info
-import speech_recognition as sr
-from deep_translator import GoogleTranslator
 import whisper
+from datetime import datetime
 
-def audio_to_text4sr(wav_file_path):
-    """
-    模块一：语音识别(转文本)模块
-    将语音转换为文本
-    """
-    if wav_file_path is None:
-        return None
-    
-    # 创建一个语音识别器
-    recognizer = sr.Recognizer()
+from dashscope.audio.asr import *
+# 若没有将API Key配置到环境变量中，需将your-api-key替换为自己的API Key
+# dashscope.api_key = "your-api-key"
+
+def audio2text4aly(wav_path):
+    translator = TranslationRecognizerRealtime(
+        model="gummy-realtime-v1", # gummy-realtime-v1/gummy-chat-v1
+        format="mp3",
+        sample_rate=16000,
+        translation_target_languages=["zh", "en"],
+        translation_enabled=True,
+        callback=None,
+    )
+
+    print(f"==1=={datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")}")
+    result = translator.call(wav_path)
+    if not result.error_message:
+        print("request id: ", result.request_id)
+        print("transcription: ")
+        for transcription_result in result.transcription_result_list:
+            print(transcription_result.text)
+            print(f"==2=={datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")}")
+            return transcription_result.text
+        print("translation[zh]: ")
+
+        for translation_result in result.translation_result_list:
+            print(translation_result.get_translation('zh').text)
         
-    try:
-        # 打开 WAV 文件
-        with sr.AudioFile(wav_file_path) as source:
-            # 记录音频数据
-            audio = recognizer.record(source)
-        # 使用Google语音识别
-        text = recognizer.recognize_google(audio, language='en-US')
-        print(f"识别结果: {text}")
-        return text
-    except sr.UnknownValueError:
-        print("无法识别语音，请重试")
-        return None
-    except Exception as e:
-        print(f"语音识别服务错误: {e}")
-        # 备用方案：使用离线识别
-        try:
-            text = recognizer.recognize_sphinx(audio)
-            print(f"离线识别结果: {text}")
-            return text
-        except:
-            return None
+    else:
+        print("Error: ", result.error_message)
 
 def audio_to_text4whisper(wav_path):
     # 初始化Whisper模型用于语音识别
-    whisper_model = whisper.load_model("base") # 可以选择其他模型，例如 "small", "medium", "large"
+    whisper_model = whisper.load_model("base") # 可以选择其他模型，例如 base/small/medium/large
+    
+    print(f"==1=={datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")}")
     result = whisper_model.transcribe(wav_path)
+
+    print(f"==2=={datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")}")
     text = result["text"].strip()
+    
     return text
 
 if __name__=="__main__":
-    print("--1--")
-    wav_path = "data/output.wav"
-    # text = audio_to_text4sr(wav_path)
+    wav_path = "data/output1.mp3"
+
+    # print(f"==1=={datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")}")
+
+    # text = audio2text4aly(wav_path)
     text = audio_to_text4whisper(wav_path)
-    print("--2--")
+    
+    # print(f"==2=={datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")}")
     print(text)

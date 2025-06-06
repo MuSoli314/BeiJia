@@ -1,19 +1,19 @@
-from logging import info
+from datetime import datetime
+from logging import error, info
 import os
 import librosa
 import numpy as np
-import speech_recognition as sr
+# import speech_recognition as sr
 import whisper
-from textstat import flesch_reading_ease, flesch_kincaid_grade
+from textstat import flesch_reading_ease
 import nltk
 from nltk.tokenize import word_tokenize, sent_tokenize
 from nltk.corpus import stopwords
 import re
-from typing import Dict, Tuple, List
+from typing import Dict, Tuple
 import warnings
 from language_tool_python import LanguageTool
-
-from utils.add_logs import setup_logger
+from dashscope.audio.asr import *
 
 warnings.filterwarnings('ignore')
 
@@ -25,21 +25,20 @@ class EnglishAudioScorer:
         
         # 初始化Whisper模型用于语音识别
         self.whisper_model = whisper.load_model("base")
+        self.translator = TranslationRecognizerRealtime(
+            model="gummy-realtime-v1",
+            format="wav",
+            sample_rate=16000,
+            translation_target_languages=["zh"],
+            translation_enabled=True,
+            callback=None,
+        )
         # 创建语言工具对象
         self.grammar_tool = LanguageTool('en-US')
         
-        # 常见英语单词列表（用于地道性评估）
-        self.common_words = set([
-            'the', 'be', 'to', 'of', 'and', 'a', 'in', 'that', 'have',
-            'i', 'it', 'for', 'not', 'on', 'with', 'he', 'as', 'you',
-            'do', 'at', 'this', 'but', 'his', 'by', 'from', 'they',
-            'she', 'or', 'an', 'will', 'my', 'one', 'all', 'would',
-            'there', 'their', 'what', 'so', 'up', 'out', 'if', 'about'
-        ])
-        
         # 语音特征阈值
-        self.pitch_std_threshold = 50  # 音调变化标准差阈值
-        self.energy_threshold = 0.01   # 能量阈值
+        # self.pitch_std_threshold = 50  # 音调变化标准差阈值
+        # self.energy_threshold = 0.01   # 能量阈值
     
     def _download_nltk_data(self):
         """下载必要的NLTK数据"""
@@ -84,10 +83,22 @@ class EnglishAudioScorer:
             result = self.whisper_model.transcribe(wav_path)
             return result["text"].strip()
         except Exception as e:
-            print(f"语音识别错误: {e}")
+            error(f"语音识别错误: {e}")
             return ""
+
+        """使用Aliyun模型进行语音转文本"""
+        # result = self.translator.call(wav_path)
+        # if not result.error_message:
+        #     print("request id: ", result.request_id)
+        #     for transcription_result in result.transcription_result_list:
+        #         print(f"transcription: {transcription_result.text}")
+        #         return transcription_result.text
+        #     for translation_result in result.translation_result_list:
+        #         print(f"translation[zh]: : {translation_result.get_translation('zh').text}")
+        # else:
+        #     print("Error: ", result.error_message)
     
-    def check_grammar(self, text):
+    async def check_grammar(self, text):
         """
         模块三：语法纠错模块
         检查并纠正语法错误
@@ -100,14 +111,14 @@ class EnglishAudioScorer:
             
             for match in matches:
                 err_txt = text[match.offset : match.offset + match.errorLength]
-                print(f"错误: {match.ruleId}, 建议: {match.replacements}, 位置: {match.offset}-{match.offset + match.errorLength}: {err_txt}")
+                # print(f"错误: {match.ruleId}, 建议: {match.replacements}, 位置: {match.offset}-{match.offset + match.errorLength}: {err_txt}")
                 error_info = {
                     'error': match.message,
                     'err_text': err_txt,
                     'suggestions': match.replacements[:3],  # 取前3个建议
                     'context': match.context,
-                    'offset': match.offset,
-                    'length': match.errorLength
+                    # 'offset': match.offset,
+                    # 'length': match.errorLength
                 }
                 corrections.append(error_info)
             
@@ -116,7 +127,6 @@ class EnglishAudioScorer:
             # corrected_text = self.grammar_tool.correct(text, matches)
             
             return {
-                'original': text,
                 'corrected': corrected_text,
                 'errors': corrections,
                 'error_count': len(corrections)
@@ -124,13 +134,12 @@ class EnglishAudioScorer:
         except Exception as e:
             print(f"语法检查错误: {e}")
             return {
-                'original': text,
                 'corrected': text,
                 'errors': [],
                 'error_count': 0
             }
         
-    def analyze_pronunciation(self, audio: np.ndarray, sr: int, transcript: str) -> Dict:
+    async def analyze_pronunciation(self, audio: np.ndarray, sr: int, transcript: str) -> Dict:
         """分析发音质量"""
         # 提取音频特征
         # 1. 音调特征
@@ -175,7 +184,7 @@ class EnglishAudioScorer:
             }
         }
     
-    def analyze_fluency(self, audio: np.ndarray, sr: int, transcript: str) -> Dict:
+    async def analyze_fluency(self, audio: np.ndarray, sr: int, transcript: str) -> Dict:
         """分析流利度"""
         # 1. 语速分析
         duration = len(audio) / sr  # 音频时长（秒）
@@ -233,98 +242,12 @@ class EnglishAudioScorer:
             }
         }
     
-    def analyze_authenticity(self, transcript: str) -> Dict:
-        """分析地道性"""
-        if not transcript:
-            return {'score': 1, 'details': {}}
-        
-        # 使用更安全的分词方法
-        try:
-            words = word_tokenize(transcript.lower())
-        except Exception as e:
-            print(f"分词失败，使用简单分割: {e}")
-            words = transcript.lower().split()
-        
-        try:
-            sentences = sent_tokenize(transcript)
-        except Exception as e:
-            print(f"句子分割失败，使用简单分割: {e}")
-            sentences = [s.strip() for s in re.split(r'[.!?]+', transcript) if s.strip()]
-        
-        # 1. 词汇复杂度
-        unique_words = set(words)
-        vocabulary_diversity = len(unique_words) / len(words) if words else 0
-        
-        # 2. 常用词使用率
-        common_word_ratio = len([w for w in words if w in self.common_words]) / len(words) if words else 0
-        
-        # 3. 句子长度变化
-        if sentences:
-            try:
-                sentence_lengths = [len(word_tokenize(sent)) for sent in sentences if sent.strip()]
-            except:
-                # 如果word_tokenize失败，使用简单分割
-                sentence_lengths = [len(sent.split()) for sent in sentences if sent.strip()]
-        else:
-            sentence_lengths = []
-            
-        if sentence_lengths and len(sentence_lengths) > 1:
-            length_variance = np.std(sentence_lengths) / np.mean(sentence_lengths)
-        else:
-            length_variance = 0
-        
-        # 4. 语法复杂度（使用可读性指标）
-        try:
-            if len(transcript.strip()) > 10:  # 确保文本长度足够
-                readability = flesch_reading_ease(transcript)
-                readability_score = min(1, max(0, readability / 100))
-            else:
-                readability_score = 0.5
-        except Exception as e:
-            print(f"可读性分析失败: {e}")
-            readability_score = 0.5
-        
-        # 5. 语言自然度评估
-        # 检查是否有不自然的重复
-        word_freq = {}
-        for word in words:
-            if word.isalpha():
-                word_freq[word] = word_freq.get(word, 0) + 1
-        
-        repetition_penalty = 0
-        for word, freq in word_freq.items():
-            if freq > len(words) * 0.1:  # 单词出现频率超过10%
-                repetition_penalty += 0.1
-        
-        # 综合地道性评分
-        authenticity_score = (
-            vocabulary_diversity * 0.25 +
-            (1 - common_word_ratio) * 0.25 +  # 不过度依赖常用词
-            readability_score * 0.3 +
-            min(1, length_variance) * 0.2 -
-            repetition_penalty
-        ) * 100
-        
-        return {
-            'score': max(1, min(100, authenticity_score)),
-            'vocabulary_diversity': vocabulary_diversity,
-            'common_word_ratio': common_word_ratio,
-            'readability_score': readability_score,
-            'details': {
-                'unique_words': len(unique_words),
-                'total_words': len(words),
-                'sentence_count': len(sentences),
-                'avg_sentence_length': np.mean(sentence_lengths) if sentence_lengths else 0
-            }
-        }
-    
     def calculate_overall_score(self, pronunciation: Dict, fluency: Dict) -> float:
         """计算综合评分"""
         # 权重分配：发音30%，流利度40%，地道性30%
         overall_score = (
             pronunciation['score'] * 0.4 +
             fluency['score'] * 0.6
-            # authenticity['score'] * 0.3
         )
         return round(overall_score, 2)
     
@@ -340,15 +263,16 @@ class EnglishAudioScorer:
             return {'error': f'音频加载失败: {e}'}
         
         # 2. 语音转文本
-        # try:
-        #     transcript = self.transcribe_audio(wav_path)
-        #     print(f"✓ 语音识别完成: {transcript[:50]}")
-        # except Exception as e:
-        #     return {'error': f'语音识别失败: {e}'}
+        try:
+            transcript = self.transcribe_audio(wav_path)
+            print(f"✓ 语音识别完成: {transcript[:50]}")
+        except Exception as e:
+            return {'error': f'语音识别失败: {e}'}
         
-        # if not transcript:
-        #     return {'error': '无法识别语音内容'}
-        transcript = "Hello, you is a good man, you know."
+        if not transcript:
+            return {'error': '无法识别语音内容'}
+        print(f"==transcribe_audio=={datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")}")
+        # transcript = "Hello, you is a good man, you know."
         
         # 3. 文本语法检查
         try:
@@ -366,12 +290,9 @@ class EnglishAudioScorer:
             print(f"✓ 流利度分析完成: {fluency_result['score']:.1f}/100")
             # print(fluency_result)
             
-            # authenticity_result = self.analyze_authenticity(transcript)
-            # print(f"✓ 地道性分析完成: {authenticity_result['score']:.1f}/100")
-            
             # 4. 计算综合评分
             overall_score = self.calculate_overall_score(
-                pronunciation_result, fluency_result, # authenticity_result
+                pronunciation_result, fluency_result, 
             )
             
             return {
@@ -380,9 +301,8 @@ class EnglishAudioScorer:
                 'grammar_check': grammar_check,
                 'pronunciation': pronunciation_result,
                 'fluency': fluency_result,
-                # 'authenticity': authenticity_result,
                 'analysis_summary': self._generate_summary(
-                    overall_score, pronunciation_result, fluency_result, # authenticity_result
+                    overall_score, pronunciation_result, fluency_result
                 )
             }
             
@@ -405,7 +325,6 @@ class EnglishAudioScorer:
         summary = f"综合评分: {overall:.1f}/100 ({level})\n\n"
         summary += f"发音评分: {pronunciation['score']:.1f}/100\n"
         summary += f"流利度评分: {fluency['score']:.1f}/100\n"
-        # summary += f"地道性评分: {authenticity['score']:.1f}/100\n\n"
         
         # 改进建议
         suggestions = []
@@ -413,8 +332,6 @@ class EnglishAudioScorer:
             suggestions.append("建议加强发音练习，注意音调稳定性")
         if fluency['score'] < 70:
             suggestions.append(f"当前语速: {fluency['speaking_rate']:.0f} WPM，建议保持在150-180 WPM")
-        # if authenticity['score'] < 70:
-        #     suggestions.append("建议增加词汇多样性，使用更自然的表达方式")
         
         if suggestions:
             summary += "改进建议:\n" + "\n".join(f"• {s}" for s in suggestions)
@@ -439,9 +356,9 @@ def en_audio_score():
     wav_file = "data/output.wav"  # 替换为实际的音频文件路径
     
     if os.path.exists(wav_file):
-        info("--1--")
+        print(f"==1=={datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")}")
         result = scorer.score_audio(wav_file)
-        info("--2--")
+        print(f"==0=={datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")}")
         
         if 'error' in result:
             print(f"错误: {result['error']}")
