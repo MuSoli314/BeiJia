@@ -1,13 +1,9 @@
-import asyncio
 import base64
-import json
 from logging import error, info
 import time
-import wave
-from flask import Flask, Response, request, jsonify
+from flask import Flask, request, jsonify
 import os
 
-from dashscope import Assistants
 from dashscope.threads import Threads, Messages, Runs
 from flask_cors import CORS
 from flask_sock import Sock
@@ -17,7 +13,6 @@ from aliyun.agent_operate import AgentOp
 from db.pg_select import DbPool
 from modules.audio2text import *
 from modules.check_score import check_score
-from modules.reply import reply_msg
 from utils.add_logs import setup_logger
 from utils.base64_to_wav import base64_to_wav
 
@@ -32,28 +27,16 @@ logger = setup_logger()
 DATA_FOLDER = 'data'
 os.makedirs(DATA_FOLDER, exist_ok=True)
 
-logger.info("==begin==")
-# scorer = EnglishAudioScorer()
-info("✓ 评分器初始化成功")
-
 # 创建数据库连接池
 db_pool = DbPool()
 # 获取user_id agents_id threads_id
 threads = db_pool.select_data("threads", "*", True, None)
 threads_dict = db_pool.convert_threads(threads)
 
-# WAV 文件参数
-sample_rate = 16000  # 采样率
-num_channels = 1     # 单声道
-sample_width = 2     # 每个样本的字节数，16 位 PCM 为 2 字节
-
 # 获取环境变量
 dashscope_api_key = os.getenv('DASHSCOPE_API_KEY')
-# 全局创建一个Assistant
-GLOBAL_ASSISTANT = Assistants.get(assistant_id="asst_453a1a31-2795-4b8b-a347-7fc3cb44f7a6")
-
-# 创建agent操作类型
 # dashscope_api_key = "sk-8448e25c726e45b2ac57fbc1b801aa7d"
+# 创建agent操作类型
 agent_op = AgentOp(dashscope_api_key)
 
 # 智能体创建
@@ -155,31 +138,6 @@ def thread_creat():
         "msgs": cnv_msgs
     })
 
-# 消息列表
-@app.route("/api/agent/message/list", methods=["POST"])
-def message_list():
-    # 获取查询参数
-    data = request.json
-    # agents_id = data["agents_id"]
-    # user_id = data["user_id"]
-    thread_id = data['thread_id']
-
-    limit = data.get('limit', 4)  # 默认值为 4
-    order = data.get('order', 'desc')  # 默认值为desc/asc
-
-    msgs = db_pool.select_data(
-        "msgs", 
-        "thread_id, user_msg_id, user_text, user_audio, authentic_score, currect, currect_msgs, suggests, ai_msg_id, ai_text, ai_audio, created_at::TEXT", 
-        "true", 
-        f"thread_id='{thread_id}' order by created_at desc limit 10"
-    )
-    print(f"---msg=={len(msgs)}, {msgs}")
-    # msgs = 1
-    if msgs is not None:
-        return {"data": msgs}, 200
-    else:
-        return {"erroe": "fail"}, 500
-
 @app.route('/api/agent/message/audio2text', methods=["POST"])
 def test():
     # 获取查询参数
@@ -190,10 +148,8 @@ def test():
     if audio is not None:
         # 创建唯一的音频文件名
         filename = f"data/audio_{int(time.time())}.wav"
-        if base64_to_wav(audio, filename):
-            text = audio_to_text4whisper(filename)
-            # 暂时先写死
-            # text = "I enjoy read books"
+        if base64_to_wav(audio, filename, 48000):
+            text = audio2text4aly(filename, 48000)
             if text is not None:
                 # 创建信息
                 msg = Messages.create(
@@ -204,15 +160,15 @@ def test():
                         "audio": audio,
                     }
                 )
+
+                os.remove(filename) # 删除临时音频文件
                 
                 return {
                     "text": text,
-                    "msg_id": msg.id
+                    "msg_id": msg.id,
                 }, 200
             else:
                 return {"error": "text is None"}, 200
-            # 删除临时音频文件
-            # os.remove(filename)
 
     return {"error": "fail"}, 500
 
