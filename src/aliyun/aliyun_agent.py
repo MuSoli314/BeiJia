@@ -1,79 +1,87 @@
-import dashscope
+# For prerequisites running the following sample, visit https://help.aliyun.com/document_detail/xxxxx.html
+
+import os
+import requests
 from http import HTTPStatus
-import json
 
-def check_status(component, operation):
-    if component.status_code == HTTPStatus.OK:
-        print(f"{operation} 成功。")
-        return True
-    else:
-        print(f"{operation} 失败。状态码：{component.status_code}，错误码：{component.code}，错误信息：{component.message}")
-        return False
+import dashscope
+from dashscope.audio.asr import *
 
+# 若没有将API Key配置到环境变量中，需将your-api-key替换为自己的API Key
+# dashscope.api_key = "your-api-key"
 
-# 1. 创建绘画助手
-# painting_assistant = dashscope.Assistants.create(
-#     model='qwen-max',   # 模型列表：https://help.aliyun.com/zh/model-studio/getting-started/models
-#     name='Art Maestro',
-#     description='用于绘画和艺术知识的AI助手',
-#     instructions='''提供绘画技巧、艺术史和创意指导的信息。
-#     使用工具进行研究和生成图像。''',
-#     tools=[
-#         {'type': 'quark_search', 'description': '用于研究艺术主题'},
-#         {'type': 'text_to_image', 'description': '用于创建视觉示例'}
-#     ]
+# r = requests.get(
+#     "https://dashscope.oss-cn-beijing.aliyuncs.com/samples/audio/paraformer/hello_world_female2.wav"
 # )
+# with open("asr_example.wav", "wb") as f:
+#     f.write(r.content)
 
-# if not check_status(painting_assistant, "助手创建"):
-#     exit()
 
-# 2. 创建一个新线程
-# thread = dashscope.Threads.create()
+class Callback(TranslationRecognizerCallback):
+    def on_open(self) -> None:
+        print("TranslationRecognizerCallback open.")
 
-# if not check_status(thread, "线程创建"):
-#     exit()
+    def on_close(self) -> None:
+        print("TranslationRecognizerCallback close.")
 
-# 3. 向线程发送消息
-thread_id = "thread_16344e95-e442-4403-8c8d-e6a63de944ec"
-message = dashscope.Messages.create(thread_id, content='Could you help me to learn english?')
+    def on_event(
+            self,
+            request_id,
+            transcription_result: TranscriptionResult,
+            translation_result: TranslationResult,
+            usage,
+    ) -> None:
+        print("request id: ", request_id)
+        print("usage: ", usage)
+        if translation_result is not None:
+            print(
+                "translation_languages: ",
+                translation_result.get_language_list(),
+            )
+            english_translation = translation_result.get_translation("en")
+            print("sentence id: ", english_translation.sentence_id)
+            print("translate to english: ", english_translation.text)
+        if transcription_result is not None:
+            print("sentence id: ", transcription_result.sentence_id)
+            print("transcription: ", transcription_result.text)
 
-if not check_status(message, "消息创建"):
-    exit()
+    def on_error(self, message) -> None:
+        print('error: {}'.format(message))
 
-# 4. 在线程上运行助手
-# run = dashscope.Runs.create(thread.id, assistant_id=painting_assistant.id)
-run = dashscope.Runs.create(
-    thread_id, 
-    assistant_id="asst_f362b86b-d930-4005-8861-2cae2b8d87b2"
+    def on_complete(self) -> None:
+        print('TranslationRecognizerCallback complete')
+
+
+callback = Callback()
+
+translator = TranslationRecognizerChat(
+    model="gummy-chat-v1",
+    format="wav",
+    sample_rate=16000,
+    callback=callback,
 )
 
-if not check_status(run, "运行创建"):
-    exit()
-# 5. 等待运行完成
-print("等待助手处理请求...")
-run = dashscope.Runs.wait(run.id, thread_id=thread_id)
+translator.start()
 
-if check_status(run, "运行完成"):
-    print(f"运行完成，状态：{run.status}")
-else:
-    print("运行未完成。")
-    exit()
-
-# 6. 检索并显示助手的响应
-messages = dashscope.Messages.list(thread_id)
-
-if check_status(messages, "消息检索"):
-    if messages.data:
-        # 显示最后一条消息的内容（助手的响应）
-        last_message = messages.data[0]
-        print("\n助手的回应：")
-        print(json.dumps(last_message, ensure_ascii=False, default=lambda o: o.__dict__, sort_keys=True, indent=4))
+try:
+    audio_data: bytes = None
+    f = open("data/test.wav", 'rb')
+    if os.path.getsize("data/test.wav"):
+        while True:
+            audio_data = f.read(12800)
+            if not audio_data:
+                break
+            else:
+                if translator.send_audio_frame(audio_data):
+                    print("send audio frame success")
+                else:
+                    print("sentence end, stop sending")
+                    break
     else:
-        print("在线程中未找到消息。")
-else:
-    print("未能检索到助手的响应。")
+        raise Exception(
+            'The supplied file was empty (zero bytes long)')
+    f.close()
+except Exception as e:
+    raise e
 
-# 提示: 这段代码创建了一个绘画助手，开始了一段关于如何绘制布偶猫的对话，
-# 并展示了助手的回答。
-
-# echo "export DASHSCOPE_API_KEY='sk-a8f7756ab8e84626867e2688a3092263'" >> ~/.zshrc
+translator.stop()

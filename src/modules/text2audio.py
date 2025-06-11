@@ -1,5 +1,6 @@
 # from gtts import gTTS
 # from pydub import AudioSegment
+import base64
 import os
 
 # # 示例文本
@@ -29,28 +30,46 @@ import os
 # coding=utf-8
 import sys
 from dashscope.audio.tts import SpeechSynthesizer
+
 # 若没有将API Key配置到环境变量中，需将apiKey替换为自己的API Key
 # import dashscope
 # dashscope.api_key = "apiKey"
 # 音色列表连接如下
+
+import wave
+import sys
+
 # https://help.aliyun.com/zh/model-studio/sambert-python-api?spm=a2c4g.11186623.help-menu-2400256.d_2_5_1_1.37b94b04100tG4#8d44ae4006hrb
-def text2audio4aly(audio_path):
+def text2audio4aly(text):
+    # 调用语音合成服务
     result = SpeechSynthesizer.call(
-        model='sambert-zhichu-v1', # /sambert-zhinan-v1/sambert-zhiqi-v1/
-        text='You are so cool.',
+        model='sambert-zhichu-v1',
+        text=text,
         sample_rate=48000,
-        format='wav')
-    
-    if result.get_audio_data() is not None:
-        with open(audio_path, 'wb') as f:
-            f.write(result.get_audio_data())
-        print('SUCCESS: get audio data: %dbytes in output.wav' %
-            (sys.getsizeof(result.get_audio_data())))
+        format='wav'
+    )
+    audio_data = result.get_audio_data()
+
+    if audio_data is not None:
+
+        with open("data/test.wav", 'wb') as f:
+            f.write(audio_data)
+        return audio_data
     else:
         print('ERROR: response is %s' % (result.get_response()))
-    
+
+        with open("data/test.wav", 'wb') as f:
+            f.write(audio_data)
+            # audio_bytes = f.read()
+            # base64_data = base64.b64encode(audio_bytes).decode('utf-8')
+            # return {
+            #     'base64_data': base64_data,
+            #     'mime_type': 'audio/wav'
+            # }
 
 if __name__=="__main__":
-    audio_path = 'data/text2audio.wav'
-    text2audio4aly(audio_path)
-    os.system("afplay data/text2audio.wav")  # macOS
+    # 同步调用
+    # audio_path = 'data/text2audio.wav'
+    text = "You are so cool."
+    text2audio4aly(text)
+    # os.system("afplay data/text2audio.wav")  # macOS

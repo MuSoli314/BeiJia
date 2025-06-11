@@ -1,0 +1,468 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>实时语音传输 - Flask-Sock</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            color: white;
+        }
+        
+        .container {
+            background: rgba(255, 255, 255, 0.1);
+            padding: 30px;
+            border-radius: 15px;
+            backdrop-filter: blur(10px);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+        }
+        
+        h1 {
+            text-align: center;
+            margin-bottom: 30px;
+            font-size: 2.5em;
+            text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.3);
+        }
+        
+        .controls {
+            text-align: center;
+            margin: 30px 0;
+        }
+        
+        button {
+            padding: 15px 30px;
+            margin: 10px;
+            font-size: 18px;
+            border: none;
+            border-radius: 25px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+        }
+        
+        #startBtn {
+            background: linear-gradient(45deg, #4CAF50, #45a049);
+            color: white;
+        }
+        
+        #stopBtn {
+            background: linear-gradient(45deg, #f44336, #da190b);
+            color: white;
+        }
+        
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(0, 0, 0, 0.3);
+        }
+        
+        button:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+        
+        .status {
+            margin: 20px 0;
+            padding: 15px;
+            border-radius: 10px;
+            background: rgba(255, 255, 255, 0.2);
+            backdrop-filter: blur(5px);
+        }
+        
+        .status.recording {
+            background: rgba(76, 175, 80, 0.3);
+            border-left: 4px solid #4CAF50;
+        }
+        
+        .status.error {
+            background: rgba(244, 67, 54, 0.3);
+            border-left: 4px solid #f44336;
+        }
+        
+        .audio-visualizer {
+            width: 100%;
+            height: 100px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 10px;
+            margin: 20px 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+        }
+        
+        .wave {
+            width: 4px;
+            height: 20px;
+            background: #fff;
+            margin: 0 2px;
+            border-radius: 2px;
+            animation: wave 1s infinite;
+            opacity: 0.3;
+        }
+        
+        .wave.active {
+            opacity: 1;
+            animation: wave 0.5s infinite;
+        }
+        
+        @keyframes wave {
+            0%, 100% { height: 20px; }
+            50% { height: 60px; }
+        }
+        
+        .log {
+            background: rgba(0, 0, 0, 0.3);
+            padding: 15px;
+            border-radius: 10px;
+            font-family: monospace;
+            font-size: 14px;
+            max-height: 200px;
+            overflow-y: auto;
+            margin-top: 20px;
+        }
+        
+        .connection-status {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            padding: 10px 15px;
+            border-radius: 20px;
+            font-size: 14px;
+            font-weight: bold;
+        }
+        
+        .connected {
+            background: rgba(76, 175, 80, 0.8);
+            color: white;
+        }
+        
+        .disconnected {
+            background: rgba(244, 67, 54, 0.8);
+            color: white;
+        }
+        
+        .connecting {
+            background: rgba(255, 193, 7, 0.8);
+            color: white;
+        }
+    </style>
+</head>
+<body>
+    <div class="connection-status connecting" id="connectionStatus">连接中...</div>
+    
+    <div class="container">
+        <h1>🎤 实时语音传输</h1>
+        <p style="text-align: center; opacity: 0.8;">基于 Flask-Sock WebSocket</p>
+        
+        <div class="controls">
+            <button id="startBtn">开始录音</button>
+            <button id="stopBtn" disabled>停止录音</button>
+        </div>
+        
+        <div class="audio-visualizer" id="visualizer">
+            <!-- 音频可视化波形 -->
+        </div>
+        
+        <div class="status" id="status">
+            准备就绪，点击开始录音
+        </div>
+        
+        <div class="log" id="log"></div>
+    </div>
+
+    <script>
+        // WebSocket连接
+        let ws = null;
+        
+        // DOM元素
+        const startBtn = document.getElementById('startBtn');
+        const stopBtn = document.getElementById('stopBtn');
+        const status = document.getElementById('status');
+        const log = document.getElementById('log');
+        const connectionStatus = document.getElementById('connectionStatus');
+        const visualizer = document.getElementById('visualizer');
+        
+        // 录音相关变量
+        let mediaRecorder;
+        let audioChunks = [];
+        let isRecording = false;
+        let audioContext;
+        let analyser;
+        let microphone;
+        let dataArray;
+        let reconnectAttempts = 0;
+        const maxReconnectAttempts = 5;
+        
+        // 创建WebSocket连接
+        function connectWebSocket() {
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsUrl = `${protocol}//localhost:5001/api/ws`;
+            
+            ws = new WebSocket(wsUrl);
+            
+            ws.onopen = function() {
+                connectionStatus.textContent = '已连接';
+                connectionStatus.className = 'connection-status connected';
+                addLog('WebSocket连接成功');
+                reconnectAttempts = 0;
+            };
+            
+            ws.onmessage = function(event) {
+                try {
+                    const message = JSON.parse(event.data);
+                    handleServerMessage(message);
+                } catch (error) {
+                    console.error('解析服务器消息失败:', error);
+                    addLog(`解析消息失败: ${error.message}`);
+                }
+            };
+            
+            ws.onclose = function(event) {
+                connectionStatus.textContent = '已断开';
+                connectionStatus.className = 'connection-status disconnected';
+                addLog(`WebSocket连接关闭: ${event.code} - ${event.reason}`);
+                
+                // 如果正在录音，停止录音
+                if (isRecording) {
+                    stopRecording();
+                }
+                
+                // 尝试重连
+                if (reconnectAttempts < maxReconnectAttempts) {
+                    reconnectAttempts++;
+                    addLog(`尝试重连 (${reconnectAttempts}/${maxReconnectAttempts})...`);
+                    connectionStatus.textContent = '重连中...';
+                    connectionStatus.className = 'connection-status connecting';
+                    setTimeout(connectWebSocket, 3000);
+                } else {
+                    addLog('重连失败，已达到最大重试次数');
+                }
+            };
+            
+            ws.onerror = function(error) {
+                console.error('WebSocket错误:', error);
+                addLog('WebSocket连接错误');
+            };
+        }
+        
+        // 处理服务器消息
+        function handleServerMessage(message) {
+            const { type, data } = message;
+            
+            switch (type) {
+                case 'status':
+                    addLog(`服务器状态: ${data.message}`);
+                    break;
+                    
+                case 'audio_received':
+                    if (data.status === 'success') {
+                        addLog(`✓ ${data.message}`);
+                    } else {
+                        addLog(`✗ 错误: ${data.message}`);
+                        status.textContent = `错误: ${data.message}`;
+                        status.className = 'status error';
+                    }
+                    break;
+                    
+                case 'recording_status':
+                    addLog(`录音状态: ${data.status} - ${data.message || ''}`);
+                    break;
+                    
+                case 'error':
+                    addLog(`服务器错误: ${data.message}`);
+                    status.textContent = `服务器错误: ${data.message}`;
+                    status.className = 'status error';
+                    break;
+                    
+                case 'heartbeat':
+                    console.log('收到心跳:', new Date(data.timestamp * 1000));
+                    break;
+                    
+                default:
+                    console.log('未知消息类型:', type, data);
+            }
+        }
+        
+        // 发送消息到服务器
+        function sendMessage(type, data = {}) {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                const message = JSON.stringify({ type, data });
+                ws.send(message);
+            } else {
+                addLog('WebSocket未连接，消息发送失败');
+            }
+        }
+        
+        // 创建音频可视化波形
+        function createWaves() {
+            visualizer.innerHTML = '';
+            for (let i = 0; i < 50; i++) {
+                const wave = document.createElement('div');
+                wave.className = 'wave';
+                visualizer.appendChild(wave);
+            }
+        }
+        
+        // 更新音频可视化
+        function updateVisualizer() {
+            if (!analyser || !isRecording) return;
+            
+            analyser.getByteFrequencyData(dataArray);
+            const waves = document.querySelectorAll('.wave');
+            
+            for (let i = 0; i < waves.length; i++) {
+                const value = dataArray[i * 4] || 0;
+                const height = (value / 255) * 80 + 20;
+                waves[i].style.height = height + 'px';
+                waves[i].classList.toggle('active', value > 50);
+            }
+            
+            if (isRecording) {
+                requestAnimationFrame(updateVisualizer);
+            }
+        }
+        
+        // 日志记录
+        function addLog(message) {
+            const timestamp = new Date().toLocaleTimeString();
+            log.innerHTML += `[${timestamp}] ${message}<br>`;
+            log.scrollTop = log.scrollHeight;
+        }
+        
+        // 开始录音
+        async function startRecording() {
+            if (!ws || ws.readyState !== WebSocket.OPEN) {
+                status.textContent = 'WebSocket未连接，无法开始录音';
+                status.className = 'status error';
+                return;
+            }
+            
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ 
+                    audio: {
+                        echoCancellation: true,
+                        noiseSuppression: true,
+                        sampleRate: 44100
+                    } 
+                });
+                
+                // 设置音频可视化
+                audioContext = new AudioContext();
+                analyser = audioContext.createAnalyser();
+                microphone = audioContext.createMediaStreamSource(stream);
+                microphone.connect(analyser);
+                
+                analyser.fftSize = 256;
+                const bufferLength = analyser.frequencyBinCount;
+                dataArray = new Uint8Array(bufferLength);
+                
+                // 创建MediaRecorder
+                mediaRecorder = new MediaRecorder(stream, {
+                    mimeType: 'audio/webm;codecs=opus'
+                });
+                
+                audioChunks = [];
+                
+                // 处理录音数据
+                mediaRecorder.ondataavailable = (event) => {
+                    if (event.data.size > 0) {
+                        audioChunks.push(event.data);
+                        
+                        // 实时发送音频数据
+                        const reader = new FileReader();
+                        reader.onload = () => {
+                            const base64Data = reader.result.split(',')[1];
+                            sendMessage('audio_data', {
+                                audio: base64Data,
+                                timestamp: Date.now()
+                            });
+                        };
+                        reader.readAsDataURL(event.data);
+                    }
+                };
+                
+                mediaRecorder.onstop = () => {
+                    stream.getTracks().forEach(track => track.stop());
+                    if (audioContext) {
+                        audioContext.close();
+                    }
+                };
+                
+                // 开始录音，每500ms发送一次数据
+                mediaRecorder.start(500);
+                isRecording = true;
+                
+                startBtn.disabled = true;
+                stopBtn.disabled = false;
+                status.textContent = '正在录音中...';
+                status.className = 'status recording';
+                
+                // 通知服务器开始录音
+                sendMessage('start_recording');
+                
+                // 开始音频可视化
+                updateVisualizer();
+                
+                addLog('开始录音');
+                
+            } catch (error) {
+                console.error('录音失败:', error);
+                status.textContent = `录音失败: ${error.message}`;
+                status.className = 'status error';
+                addLog(`录音失败: ${error.message}`);
+            }
+        }
+        
+        // 停止录音
+        function stopRecording() {
+            if (mediaRecorder && isRecording) {
+                mediaRecorder.stop();
+                isRecording = false;
+                
+                startBtn.disabled = false;
+                stopBtn.disabled = true;
+                status.textContent = '录音已停止';
+                status.className = 'status';
+                
+                // 通知服务器停止录音
+                sendMessage('stop_recording');
+                
+                // 清除波形动画
+                const waves = document.querySelectorAll('.wave');
+                waves.forEach(wave => {
+                    wave.classList.remove('active');
+                    wave.style.height = '20px';
+                });
+                
+                addLog('停止录音');
+            }
+        }
+        
+        // 事件监听
+        startBtn.addEventListener('click', startRecording);
+        stopBtn.addEventListener('click', stopRecording);
+        
+        // 页面卸载时关闭连接
+        window.addEventListener('beforeunload', () => {
+            if (isRecording) {
+                stopRecording();
+            }
+            if (ws) {
+                ws.close();
+            }
+        });
+        
+        // 初始化
+        createWaves();
+        addLog('页面加载完成，正在连接WebSocket...');
+        connectWebSocket();
+    </script>
+</body>
+</html>

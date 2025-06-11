@@ -7,29 +7,21 @@ from dashscope.audio.asr import *
 # dashscope.api_key = "your-api-key"
 
 def audio2text4aly(wav_path):
+    format = wav_path.rsplit('.', 1)[-1]
     translator = TranslationRecognizerRealtime(
-        model="gummy-realtime-v1", # gummy-realtime-v1/gummy-chat-v1
-        format="mp3",
+        model="gummy-chat-v1", # gummy-realtime-v1/gummy-chat-v1
+        format=format,
         sample_rate=16000,
-        translation_target_languages=["zh", "en"],
-        translation_enabled=True,
+        translation_target_languages=["en"],
+        translation_enabled=False,
         callback=None,
     )
 
-    print(f"==1=={datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")}")
+    print(f"==1=={wav_path}--{datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")}")
     result = translator.call(wav_path)
     if not result.error_message:
-        print("request id: ", result.request_id)
-        print("transcription: ")
         for transcription_result in result.transcription_result_list:
-            print(transcription_result.text)
-            print(f"==2=={datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")}")
             return transcription_result.text
-        print("translation[zh]: ")
-
-        for translation_result in result.translation_result_list:
-            print(translation_result.get_translation('zh').text)
-        
     else:
         print("Error: ", result.error_message)
 
@@ -46,12 +38,13 @@ def audio_to_text4whisper(wav_path):
     return text
 
 if __name__=="__main__":
-    wav_path = "data/output1.mp3"
+    wav_path = "data/test.wav"
+    # wav_path = "data/audio_1749628824.wav"
 
     # print(f"==1=={datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")}")
 
-    # text = audio2text4aly(wav_path)
-    text = audio_to_text4whisper(wav_path)
+    text = audio2text4aly(wav_path)
+    # text = audio_to_text4whisper(wav_path)
     
     # print(f"==2=={datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")}")
     print(text)

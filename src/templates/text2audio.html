@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>语音合成与录音</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 600px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .container {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+        textarea {
+            width: 100%;
+            height: 100px;
+            padding: 10px;
+            border-radius: 5px;
+            border: 1px solid #ccc;
+        }
+        .button-group {
+            display: flex;
+            gap: 10px;
+        }
+        button {
+            padding: 10px 15px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+        }
+        button:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
+        }
+        #recordButton {
+            background-color: #f44336;
+        }
+        #stopButton {
+            background-color: #ff9800;
+            display: none;
+        }
+        .status {
+            margin-top: 10px;
+            font-style: italic;
+            color: #666;
+        }
+        audio {
+            width: 100%;
+            margin-top: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>语音合成与录音</h1>
+        
+        <div>
+            <h3>文本转语音</h3>
+            <textarea id="textInput" placeholder="输入要转换为语音的文本..."></textarea>
+            <div class="button-group">
+                <button id="synthesizeButton">合成语音</button>
+            </div>
+            <audio id="synthesizedAudio" controls></audio>
+        </div>
+        
+        <div>
+            <h3>录音功能</h3>
+            <div class="button-group">
+                <button id="recordButton">开始录音</button>
+                <button id="stopButton" disabled>停止录音</button>
+                <button id="sendRecordingButton" disabled>发送录音</button>
+            </div>
+            <p class="status" id="recordingStatus">准备录音...</p>
+            <audio id="recordedAudio" controls></audio>
+        </div>
+    </div>
+
+    <script>
+        // 语音合成功能
+        document.getElementById('synthesizeButton').addEventListener('click', async () => {
+            const text = document.getElementById('textInput').value.trim();
+            if (!text) {
+                alert('请输入要合成的文本');
+                return;
+            }
+
+            const button = document.getElementById('synthesizeButton');
+            button.disabled = true;
+            button.textContent = '合成中...';
+
+            try {
+                const response = await fetch('http://localhost:5001/api/agent/text2audio', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ text: text })
+                });
+                
+                const data = await response.json();
+                
+                if (data.status === 'success') {
+                    const audio = document.getElementById('synthesizedAudio');
+                    audio.src = `data:audio/wav;base64,${data.audio_base64}`;
+                    audio.style.display = 'block';
+                } else {
+                    alert('语音合成失败: ' + data.message);
+                }
+            } catch (error) {
+                console.error('Error:', error);
+                alert('请求失败: ' + error.message);
+            } finally {
+                button.disabled = false;
+                button.textContent = '合成语音';
+            }
+        });
+
+        // 录音功能
+        let mediaRecorder;
+        let audioChunks = [];
+        const recordButton = document.getElementById('recordButton');
+        const stopButton = document.getElementById('stopButton');
+        const sendRecordingButton = document.getElementById('sendRecordingButton');
+        const recordingStatus = document.getElementById('recordingStatus');
+        const recordedAudio = document.getElementById('recordedAudio');
+
+        recordButton.addEventListener('click', startRecording);
+        stopButton.addEventListener('click', stopRecording);
+        sendRecordingButton.addEventListener('click', sendRecording);
+
+        async function startRecording() {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                mediaRecorder = new MediaRecorder(stream);
+                
+                mediaRecorder.ondataavailable = event => {
+                    audioChunks.push(event.data);
+                };
+                
+                mediaRecorder.onstop = () => {
+                    const audioBlob = new Blob(audioChunks, { type: 'audio/wav' });
+                    recordedAudio.src = URL.createObjectURL(audioBlob);
+                    sendRecordingButton.disabled = false;
+                };
+                
+                audioChunks = [];
+                mediaRecorder.start();
+                recordingStatus.textContent = "录音中...";
+                recordButton.style.display = 'none';
+                stopButton.style.display = 'inline-block';
+                stopButton.disabled = false;
+                sendRecordingButton.disabled = true;
+            } catch (err) {
+                console.error('录音错误:', err);
+                alert('无法访问麦克风: ' + err.message);
+            }
+        }
+
+        function stopRecording() {
+            if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+                mediaRecorder.stop();
+                recordingStatus.textContent = "录音完成";
+                stopButton.disabled = true;
+                recordButton.style.display = 'inline-block';
+                stopButton.style.display = 'none';
+                
+                // 停止所有音轨
+                mediaRecorder.stream.getTracks().forEach(track => track.stop());
+            }
+        }
+
+        async function sendRecording() {
+            if (audioChunks.length === 0) {
+                alert('没有可发送的录音数据');
+                return;
+            }
+
+            sendRecordingButton.disabled = true;
+            sendRecordingButton.textContent = '发送中...';
+            recordingStatus.textContent = "发送录音数据...";
+
+            try {
+                const audioBlob = new Blob(audioChunks, { type: 'audio/wav' });
+                
+                // 将Blob转换为Base64
+                const reader = new FileReader();
+                reader.readAsDataURL(audioBlob);
+                
+                reader.onload = async () => {
+                    const base64Audio = reader.result.split(',')[1]; // 移除data:audio/wav;base64,前缀
+                    
+                    try {
+                        const response = await fetch('http://localhost:5001/api/agent/text2audio', {
+                            method: 'POST', 
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ audio_base64: base64Audio })
+                        });
+                        
+                        const data = await response.json();
+                        
+                        if (data.status === 'success') {
+                            alert('录音发送成功！识别结果: ' + data.text);
+                            document.getElementById('textInput').value = data.text || '';
+                        } else {
+                            alert('录音处理失败: ' + data.message);
+                        }
+                    } catch (error) {
+                        console.error('发送错误:', error);
+                        alert('发送失败: ' + error.message);
+                    } finally {
+                        sendRecordingButton.disabled = false;
+                        sendRecordingButton.textContent = '发送录音';
+                        recordingStatus.textContent = "录音完成";
+                    }
+                };
+                
+                reader.onerror = () => {
+                    alert('音频数据转换失败');
+                    sendRecordingButton.disabled = false;
+                    sendRecordingButton.textContent = '发送录音';
+                };
+                
+            } catch (error) {
+                console.error('Error:', error);
+                alert('处理录音数据时出错: ' + error.message);
+                sendRecordingButton.disabled = false;
+                sendRecordingButton.textContent = '发送录音';
+            }
+        }
+    </script>
+</body>
+</html>

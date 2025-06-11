@@ -1,0 +1,150 @@
+<!-- templates/index.html -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>语音上传演示</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 600px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        button {
+            padding: 10px 15px;
+            font-size: 16px;
+            margin: 5px;
+        }
+        #status {
+            margin-top: 20px;
+            padding: 10px;
+            border: 1px solid #ddd;
+            min-height: 20px;
+        }
+    </style>
+</head>
+<body>
+    <h1>语音上传演示</h1>
+    
+    <button id="startBtn">开始录音</button>
+    <button id="stopBtn" disabled>停止录音</button>
+    <button id="uploadBtn" disabled>上传录音</button>
+    
+    <div id="status">准备就绪</div>
+    <audio id="audioPlayer" controls style="margin-top: 20px; display: none;"></audio>
+    
+    <script>
+        const startBtn = document.getElementById('startBtn');
+        const stopBtn = document.getElementById('stopBtn');
+        const uploadBtn = document.getElementById('uploadBtn');
+        const statusDiv = document.getElementById('status');
+        const audioPlayer = document.getElementById('audioPlayer');
+        
+        let mediaRecorder;
+        let audioChunks = [];
+        let socket;
+        let recordedBlob;
+        
+        // 设置WebSocket连接
+        function setupWebSocket() {
+            socket = new WebSocket(`ws:/127.0.0.1:5001/api/agent/message/audio2text`);
+            
+            socket.onopen = () => {
+                statusDiv.textContent = "WebSocket已连接，可以开始录音";
+                startBtn.disabled = false;
+            };
+            
+            socket.onmessage = (event) => {
+                statusDiv.textContent = "服务器: " + event.data;
+                console.log("服务器响应:", event.data);
+            };
+            
+            socket.onerror = (error) => {
+                statusDiv.textContent = "WebSocket错误: " + error.message;
+            };
+            
+            socket.onclose = () => {
+                statusDiv.textContent = "WebSocket已断开";
+            };
+        }
+        
+        // 开始录音
+        startBtn.addEventListener('click', async () => {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                mediaRecorder = new MediaRecorder(stream);
+                audioChunks = [];
+                
+                mediaRecorder.ondataavailable = (event) => {
+                    if (event.data.size > 0) {
+                        audioChunks.push(event.data);
+                    }
+                };
+                
+                mediaRecorder.onstop = () => {
+                    recordedBlob = new Blob(audioChunks, { type: 'audio/wav' });
+                    audioPlayer.src = URL.createObjectURL(recordedBlob);
+                    audioPlayer.style.display = 'block';
+                    uploadBtn.disabled = false;
+                };
+                
+                mediaRecorder.start(100); // 每100ms收集一次数据
+                
+                statusDiv.textContent = "录音中...";
+                startBtn.disabled = true;
+                stopBtn.disabled = false;
+                uploadBtn.disabled = true;
+                
+            } catch (error) {
+                statusDiv.textContent = "录音错误: " + error.message;
+            }
+        });
+        
+        // 停止录音
+        stopBtn.addEventListener('click', () => {
+            if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+                mediaRecorder.stop();
+                mediaRecorder.stream.getTracks().forEach(track => track.stop());
+                
+                statusDiv.textContent = "录音已停止，可以上传";
+                startBtn.disabled = false;
+                stopBtn.disabled = true;
+            }
+        });
+        
+        // 上传录音
+        uploadBtn.addEventListener('click', async () => {
+            if (!recordedBlob || socket.readyState !== WebSocket.OPEN) {
+                statusDiv.textContent = "无法上传: 无录音数据或连接未就绪";
+                return;
+            }
+            
+            uploadBtn.disabled = true;
+            statusDiv.textContent = "正在上传录音...";
+            
+            try {
+                // 将Blob转换为Base64
+                const reader = new FileReader();
+                reader.onload = () => {
+                    const base64Data = reader.result.split(',')[1]; // 移除data:audio/wav;base64,前缀
+                    socket.send(base64Data);
+                };
+                reader.onerror = () => {
+                    statusDiv.textContent = "读取音频数据失败";
+                    uploadBtn.disabled = false;
+                };
+                reader.readAsDataURL(recordedBlob);
+                
+            } catch (error) {
+                statusDiv.textContent = "上传错误: " + error.message;
+                uploadBtn.disabled = false;
+            }
+        });
+        
+        // 初始化WebSocket连接
+        setupWebSocket();
+    </script>
+</body>
+</html>
