@@ -176,10 +176,7 @@ def test():
                 return {"error": "text is None"}, 200
     elif types=='text':
         audio = text2audio4aly(content, audio_model)
-        # 将音频数据转换为 Base64 编码
-        if audio is not None:
-            audio = base64.b64encode(audio).decode('utf-8')
-
+        
         # 创建信息
         msg = Messages.create(
             thread_id=thread_id,
@@ -187,7 +184,6 @@ def test():
             role="user",
             metadata={
                 "audio": audio,
-                "check": None,
             }
         )
 
@@ -259,32 +255,18 @@ async def get_reply():
         print(msg_id)
 
         # 调用语音合成服务
-        result = SpeechSynthesizer.call(
-            model=audio_model,
-            text=text,
-            sample_rate=48000,
-            format='wav'
+        audio = text2audio4aly(text, audio_model)
+        
+        # 将音频数据更新到msg
+        thread = Messages.update(
+            message_id=msg_id,
+            thread_id=thread_id,
+            metadata={'audio': audio}
         )
-        # 检查是否成功获取音频数据
-        audio_data = result.get_audio_data()
-
-        response = result.get_response()
-        # print(response)
-        if audio_data is not None:
-            # 将音频数据转换为 Base64 编码
-            audio_base64 = base64.b64encode(audio_data).decode('utf-8')
-            # 将音频数据更新到msg
-            thread = Messages.update(
-                message_id=msg_id,
-                thread_id=thread_id,
-                metadata={'audio': audio_base64}
-            )
-        else:
-            error_msg = "文本转语音失败"
 
         return jsonify({
             "reply": text,
-            "audio": audio_base64,
+            "audio": audio,
             # "info": error_msg
         })
 
@@ -299,32 +281,18 @@ def synthesize():
 
     if text!='':
         # 调用语音合成服务
-        result = SpeechSynthesizer.call(
-            model=audio_model,
-            text=text,
-            sample_rate=48000,
-            format='wav'
-        )
-        # 检查是否成功获取音频数据
-        audio_data = result.get_audio_data()
-
-        response = result.get_response()
-        # print(response)
+        audio_data = text2audio4aly(text, model=audio_model)
 
         if audio_data is not None:
-            # return Response(audio_data, mimetype='audio/wav')
-
-            # 将音频数据转换为 Base64 编码
-            audio_base64 = base64.b64encode(audio_data).decode('utf-8')
             return {
                 "status": "success",
-                "audio_base64": audio_base64,
+                "audio": audio_data,
                 "message": "音频数据已成功生成"
             }, 200
         else:
-            return response, 500
-    elif audio_base64!='':
-        return {'error': "Not find text"}, 400
+            return "response", 500
+        
+    return {'error': "Not find text"}, 400
     
 # export DASHSCOPE_API_KEY="sk-8448e25c726e45b2ac57fbc1b801aa7d"
 # echo $DASHSCOPE_API_KEY

@@ -23,8 +23,9 @@ def text2audio4aly(text, model="sambert-donne-v1", file_path=None):
         if file_path is not None:
             with open(file_path, 'wb') as f:
                 f.write(audio_data)
-
-        return audio_data
+                
+        audio = base64.b64encode(audio_data).decode('utf-8')
+        return audio
     else:
         print('ERROR: response is %s' % (result.get_response()))
         return None
