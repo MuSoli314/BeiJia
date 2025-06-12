@@ -13,8 +13,10 @@ from aliyun.agent_operate import AgentOp
 from db.pg_select import DbPool
 from modules.audio2text import *
 from modules.check_score import check_score
+from modules.text2audio import text2audio4aly
 from utils.add_logs import setup_logger
 from utils.base64_to_wav import base64_to_wav
+from utils.webm_to_pcm import webm_to_pcm
 
 app = Flask(__name__)
 # 允许所有来源访问（开发环境使用，生产环境应指定具体域名）
@@ -138,17 +140,19 @@ def thread_creat():
         "msgs": cnv_msgs
     })
 
-@app.route('/api/agent/message/audio2text', methods=["POST"])
+@app.route('/api/agent/message/audio_text', methods=["POST"])
 def test():
     # 获取查询参数
     json_data = request.json
-    audio = json_data.get("audio")
     thread_id = json_data.get("thread_id")
+    types = json_data.get("types")
+    content = json_data.get("content")
+    audio_model = json_data.get("audio_model", "sambert-donne-v1")
 
-    if audio is not None:
+    if types=='audio':
         # 创建唯一的音频文件名
         filename = f"data/audio_{int(time.time())}.wav"
-        if base64_to_wav(audio, filename, 48000):
+        if base64_to_wav(content, filename, 48000):
             text = audio2text4aly(filename, 48000)
             if text is not None:
                 # 创建信息
@@ -157,7 +161,7 @@ def test():
                     content=text,
                     role="user",
                     metadata={
-                        "audio": audio,
+                        "audio": content,
                     }
                 )
 
@@ -165,11 +169,34 @@ def test():
                 
                 return {
                     "text": text,
+                    "audio": None,
                     "msg_id": msg.id,
                 }, 200
             else:
                 return {"error": "text is None"}, 200
+    elif types=='text':
+        audio = text2audio4aly(content, audio_model)
+        # 将音频数据转换为 Base64 编码
+        if audio is not None:
+            audio = base64.b64encode(audio).decode('utf-8')
 
+        # 创建信息
+        msg = Messages.create(
+            thread_id=thread_id,
+            content=content,
+            role="user",
+            metadata={
+                "audio": audio,
+                "check": None,
+            }
+        )
+
+        return {
+            "text": content,
+            "audio": audio,
+            "msg_id": msg.id,
+        }, 200
+        
     return {"error": "fail"}, 500
 
 # 纠错和评分
@@ -183,7 +210,7 @@ def check():
     # 纠错和评分
     check_res = check_score(text)
     info("语法检查完毕")
-
+    
     # 检索消息
     message = Messages.retrieve(
         message_id=msg_id,
@@ -302,6 +329,5 @@ def synthesize():
 # export DASHSCOPE_API_KEY="sk-8448e25c726e45b2ac57fbc1b801aa7d"
 # echo $DASHSCOPE_API_KEY
 if __name__ == '__main__':
-    # app.run(debug=True)
-    app.run(host='0.0.0.0', port=5001, debug=True)
+    app.run(host='0.0.0.0', port=5001, debug=True)    
 # scp -r src root@47.106.71.193://root/bjyy/src_new ZX.9X@mT4JmWsQT

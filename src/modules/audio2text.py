@@ -7,10 +7,10 @@ from dashscope.audio.asr import *
 # dashscope.api_key = "your-api-key"
 
 def audio2text4aly(wav_path, sample_rate=48000):
-    file_format = wav_path.rsplit('.', 1)[-1]
+    # file_format = wav_path.rsplit('.', 1)[-1]
     translator = TranslationRecognizerRealtime(
         model="gummy-realtime-v1", # gummy-realtime-v1/gummy-chat-v1
-        format=file_format,
+        format="pcm",
         sample_rate=sample_rate, # 这个参数要和wva文件一致 ffmpeg -i data/audio_1749618717.wav
         source_language="en",
         transcription_enabled=True,
@@ -43,7 +43,7 @@ if __name__=="__main__":
     wav_path = "data/audio_1749630457.wav"
 
     print(f"==1=={datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")}")
-
+    
     text = audio2text4aly(wav_path)
 
     # 初始化Whisper模型用于语音识别
