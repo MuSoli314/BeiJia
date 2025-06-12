@@ -14,6 +14,7 @@ from db.pg_select import DbPool
 from modules.audio2text import *
 from modules.check_score import check_score
 from modules.text2audio import text2audio4aly
+from modules.translate_en_zh import *
 from utils.add_logs import setup_logger
 from utils.base64_to_wav import base64_to_wav
 from utils.webm_to_pcm import webm_to_pcm
@@ -272,27 +273,35 @@ async def get_reply():
 
     return jsonify({"info": "fail"}), 500
 
-# 将文本转语音
-@app.route('/api/agent/message/text2audio', methods=['POST'])
-def synthesize():
+# 翻译英语为中文
+@app.route('/api/translate', methods=['POST'])
+async def synthesize():
     # 获取前端传递的文本参数
-    audio_model = request.json.get('audio_model', 'sambert-donna-v1')
     text = request.json.get('text', '')
 
     if text!='':
         # 调用语音合成服务
-        audio_data = text2audio4aly(text, model=audio_model)
+        # zh_text = await translate4google(text)
+        zh_text = offline_translate(text)
 
-        if audio_data is not None:
+        if zh_text is not None:
             return {
-                "status": "success",
-                "audio": audio_data,
-                "message": "音频数据已成功生成"
+                "status": 1,
+                "zh_text": zh_text,
+                "msg": '',
             }, 200
         else:
-            return "response", 500
+            return {
+                "status": 0,
+                "zh_text": None,
+                "msg": '翻译失败',
+            }, 500
         
-    return {'error': "Not find text"}, 400
+    return {
+        "status": 0,
+        "zh_text": None,
+        "msg": 'text is None',
+    }, 400
     
 # export DASHSCOPE_API_KEY="sk-8448e25c726e45b2ac57fbc1b801aa7d"
 # echo $DASHSCOPE_API_KEY

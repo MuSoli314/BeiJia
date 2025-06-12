@@ -29,7 +29,7 @@ def check_score(content, ws=None):
                 请对以下句子进行语法纠错, 纠错后的句子存储在 currect 中,
                 纠错信息使用中文在 currect_msgs 中一条一条说明, 
                 然后给纠错后的句子进行地道分打分存储在 score 中,
-                如果地道分小于80, 请在suggest中列出更地道的表达, 
+                如果地道分小于80, 请在suggest中列出1到2个更地道的表达, 
                 最后以JSON格式输出结果。
                 示例：
                 Q: "How is you?"
