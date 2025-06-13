@@ -48,7 +48,7 @@ class DbPool:
             print(f"==select_data==failed: {e}")
             return None
     
-    # 插入 users 库数据
+    # 插入 users 数据
     def ins_users(self, mobile, ver_code):
         max_retries = 10
         attempt = 0
@@ -81,6 +81,36 @@ class DbPool:
                 if attempt >= max_retries:
                     error("==ins_users==failed: Maximum retry attempts reached. Aborting.")
                     # raise SystemExit("==ins_agents==failed")
+            finally:
+                # 释放连接
+                self.pool.putconn(conn)
+    # 删除 users 数据
+    def delete_user(self, user_id):
+        max_retries = 10
+        attempt = 0
+
+        while attempt < max_retries:
+            try:
+                conn = self.pool.getconn()
+                cursor = conn.cursor()
+
+                cursor.execute("""
+                    DELETE FROM users 
+                    WHERE id = %s
+                """, [user_id])
+
+                # 提交事务
+                conn.commit()
+                affected_rows = cursor.rowcount
+                info(f"==delete_user==success: {affected_rows}")
+
+                return affected_rows
+            except Exception as e:
+                error(f"==delete_user==failed: {e}, retrying {attempt + 1}/{max_retries}")
+                attempt += 1
+                if attempt >= max_retries:
+                    error("==delete_user==failed: Maximum retry attempts reached. Aborting.")
+                    # raise SystemExit("==delete_user==failed")
             finally:
                 # 释放连接
                 self.pool.putconn(conn)

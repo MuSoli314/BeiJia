@@ -50,7 +50,7 @@ def send_code():
     json_data = request.get_json()
     mobile = json_data.get('mobile')
     if mobile is None:
-        return jsonify({"error": "mobile is None"}), 400
+        return jsonify({"msg": "mobile不能为空"}), 400
     
     ver_code = get_ver_code()
 
@@ -60,17 +60,18 @@ def send_code():
         print("==ins_users==success: ", res)
         # return jsonify({}), 200
         if res==0:
-            return jsonify({"error": "之前的验证码仍然有效，请勿重复发送"}), 200
+            return jsonify({"msg": "之前的验证码仍然有效，请勿重复发送"}), 400
         else:
             response = send_ver_code(mobile, ver_code)
             response_json = response.json()
 
             if response_json.get("code") == 0:
-                return jsonify(response_json), 200
+                return jsonify({"msg": "验证码发送成功"}), 200
             else:
-                return jsonify(response_json), 500
+                db_pool.delete_user(mobile)
+                return jsonify({"msg": response_json['msg']}), 500
     else:
-        return jsonify({"error": "服务器错误"}), 500
+        return jsonify({"msg": "服务器错误"}), 500
 
 # 验证验证码
 @app.route('/api/check_code', methods=['POST'])
@@ -80,35 +81,35 @@ def check_code():
     code = json_data.get('code')
     
     if mobile is None or code is None:
-        return jsonify({"error": "mobile and code are required"}), 400
+        return jsonify({"msg": "mobile和code不能为空"}), 400
     
     # 从数据库查询验证码信息
     user_data = db_pool.select_data("users", "*", True, f"mobile='{mobile}'")
     if user_data is None:
-        return jsonify({"error": "服务器错误"}), 500
+        return jsonify({"msg": "服务器错误"}), 500
     
     if not user_data:
-        return jsonify({"error": "手机号未找到"}), 404
+        return jsonify({"msg": "手机号未找到"}), 404
     
     user = user_data[0]
     
     # 检查验证码是否正确
     if user['ver_code'] != code:
-        return jsonify({"error": "验证码错误"}), 400
+        return jsonify({"msg": "验证码错误"}), 400
     
     # 检查验证码是否过期
     from datetime import datetime
     if user['exp_at'] and datetime.now() > user['exp_at']:
-        return jsonify({"error": "验证码已过期"}), 400
+        return jsonify({"msg": "验证码已过期"}), 400
     
     # 验证成功，更新用户验证状态
     try:
         if db_pool.update_user_verification(mobile):
             return jsonify({"message": "验证成功", "mobile": mobile}), 200
         else:
-            return jsonify({"error": "服务器错误"}), 500
+            return jsonify({"msg": "服务器错误"}), 500
     except Exception as e:
-        logger.error(f"更新用户验证状态失败: {e}")
+        logger.msg(f"更新用户验证状态失败: {e}")
         return jsonify({"error": "服务器错误"}), 500
 
 # 智能体创建
