@@ -13,10 +13,12 @@ from aliyun.agent_operate import AgentOp
 from db.pg_select import DbPool
 from modules.audio2text import *
 from modules.check_score import check_score
+from modules.send_code import send_ver_code
 from modules.text2audio import text2audio4aly
 from modules.translate_en_zh import *
 from utils.add_logs import setup_logger
 from utils.base64_to_wav import base64_to_wav
+from utils.get_ver_code import get_ver_code
 from utils.webm_to_pcm import webm_to_pcm
 
 app = Flask(__name__)
@@ -42,6 +44,73 @@ dashscope_api_key = os.getenv('DASHSCOPE_API_KEY')
 # 创建agent操作类型
 agent_op = AgentOp(dashscope_api_key)
 
+# 获取验证码
+@app.route('/api/send_code', methods=['POST'])
+def send_code():
+    json_data = request.get_json()
+    mobile = json_data.get('mobile')
+    if mobile is None:
+        return jsonify({"error": "mobile is None"}), 400
+    
+    ver_code = get_ver_code()
+
+    # 将手机号和验证码写入数据库
+    res = db_pool.ins_users(mobile, ver_code)
+    if res is not None:
+        print("==ins_users==success: ", res)
+        # return jsonify({}), 200
+        if res==0:
+            return jsonify({"error": "之前的验证码仍然有效，请勿重复发送"}), 200
+        else:
+            response = send_ver_code(mobile, ver_code)
+            response_json = response.json()
+
+            if response_json.get("code") == 0:
+                return jsonify(response_json), 200
+            else:
+                return jsonify(response_json), 500
+    else:
+        return jsonify({"error": "服务器错误"}), 500
+
+# 验证验证码
+@app.route('/api/check_code', methods=['POST'])
+def check_code():
+    json_data = request.get_json()
+    mobile = json_data.get('mobile')
+    code = json_data.get('code')
+    
+    if mobile is None or code is None:
+        return jsonify({"error": "mobile and code are required"}), 400
+    
+    # 从数据库查询验证码信息
+    user_data = db_pool.select_data("users", "*", True, f"mobile='{mobile}'")
+    if user_data is None:
+        return jsonify({"error": "服务器错误"}), 500
+    
+    if not user_data:
+        return jsonify({"error": "手机号未找到"}), 404
+    
+    user = user_data[0]
+    
+    # 检查验证码是否正确
+    if user['ver_code'] != code:
+        return jsonify({"error": "验证码错误"}), 400
+    
+    # 检查验证码是否过期
+    from datetime import datetime
+    if user['exp_at'] and datetime.now() > user['exp_at']:
+        return jsonify({"error": "验证码已过期"}), 400
+    
+    # 验证成功，更新用户验证状态
+    try:
+        if db_pool.update_user_verification(mobile):
+            return jsonify({"message": "验证成功", "mobile": mobile}), 200
+        else:
+            return jsonify({"error": "服务器错误"}), 500
+    except Exception as e:
+        logger.error(f"更新用户验证状态失败: {e}")
+        return jsonify({"error": "服务器错误"}), 500
+
 # 智能体创建
 @app.route('/api/agent', methods=['POST'])
 def agent_creat():
@@ -53,7 +122,8 @@ def agent_creat():
 
     # 插入数据库 默认sambert-donna-v1 教育女声
     if status_code==200:
-        db_pool.ins_agents(response_json.get("id"), response_json.get("model"), response_json.get("audio_model", "sambert-donna-v1"), response_json.get("name"), response_json.get("description"))
+        print(response_json.get("id"), response_json.get("model"), json_data.get("audio_model", "sambert-donna-v1"), response_json.get("name"), response_json.get("description"))
+        db_pool.ins_agents(response_json.get("id"), response_json.get("model"), json_data.get("audio_model", "sambert-donna-v1"), response_json.get("name"), response_json.get("description"))
 
     return jsonify(response_json), status_code
 
@@ -61,7 +131,11 @@ def agent_creat():
 @app.route('/api/agent', methods=['GET'])
 def agent_list():
     # 获取查询参数
-    agents_list = db_pool.select_data("agents", "*", True)
+    order = request.args.get("order", "desc")
+    limit = request.args.get("limit", 10)
+    print(order, limit)
+
+    agents_list = db_pool.select_data("agents", "*", True, f"True order by created_at {order} limit {limit}")
 
     if agents_list is not None:
         return jsonify(agents_list), 200
@@ -90,7 +164,7 @@ def agent_update(id):
         or "name" in json_data \
         or "description" in json_data\
         or "audio_model" in json_data:
-            db_pool.update_agents(response_json.get("id"), response_json.get("model"), response_json.get("name"), response_json.get("description"), response_json.get("audio_model"))
+            db_pool.update_agents(response_json.get("id"), response_json.get("model"), response_json.get("name"), response_json.get("description"), json_data.get("audio_model"))
 
     return jsonify(response_json), status_code
 
@@ -111,37 +185,45 @@ def agent_delete(id):
 @app.route("/api/threads", methods=["POST"])
 def thread_creat():
     agent_id = request.json["agent_id"]
-    user_id = request.json["user_id"]
+    user_id = request.json["user_id"].lower()
+    # 历史对话
+    cnv_msgs = []
     # 每个用户开启一个Thread
     # 判断用户是否有进程,如果没有则创建
     thread_id = threads_dict.get(f"{agent_id}__{user_id}", None)
     if thread_id==None:
         # 每个用户开启一个Thread
-        thread = Threads.create(metadata={"owner": user_id})
+        thread = Threads.create(metadata={"owner": user_id}, messages=[{
+            "role": "user", 
+            "content": "Who are you!",
+        }])
         thread_id = thread.id
         threads_dict[f"{agent_id}__{user_id}"] = thread_id
         # 插入数据库
         db_pool.ins_threads(thread_id, agent_id, user_id)
-    info(f"==thread==create success")
+        info(f"==thread==create success")
+    else:
+        # 获取历史对话
+        msgs = Messages.list(thread_id=thread_id, limit=10, order="desc").data
+        if msgs:
+            for msg in msgs:
+                role = msg.role
+                text = msg.content[0].text.value
+                metadata = msg.metadata
+                cnv_msgs.append({
+                    "role": role,
+                    "text": text,
+                    "audio": metadata.get("audio"),
+                    "check": metadata.get("check")
+                })
+        cnv_msgs.reverse()
 
-    # 获取历史对话
-    msgs = Messages.list(thread_id=thread_id, limit=10, order="desc").data
-    cnv_msgs = []
-    if msgs:
-        for msg in msgs:
-            text = msg.content[0].text.value
-            metadata = msg.metadata
-            cnv_msgs.append({
-                "text": text,
-                "audio": metadata.get("audio"),
-                "check": metadata.get("check")
-            })
     return jsonify({
         "thread_id": thread_id,
         "msgs": cnv_msgs
     })
 
-@app.route('/api/agent/message/audio_text', methods=["POST"])
+@app.route('/api/agent/message/send', methods=["POST"])
 def test():
     # 获取查询参数
     json_data = request.json
@@ -226,14 +308,13 @@ def check():
     return jsonify(check_res)
 
 # 运行任务创建、执行
-@app.route("/api/agent/message/send", methods=["POST"])
+@app.route("/api/agent/message/reply", methods=["POST"])
 async def get_reply():
     json_data = request.json
 
     agent_id = json_data.get('agent_id')
     thread_id = json_data.get('thread_id')
     audio_model = request.json.get('audio_model', 'sambert-donna-v1')
-    text = json_data["text"]
 
     # 新建run
     run = Runs.create(
@@ -244,7 +325,6 @@ async def get_reply():
     )
     info(f"==run==create success")
 
-    error_msg = ""
     # 等待run完成
     final_run = Runs.wait(run_id=run.id, thread_id=thread_id, timeout_seconds=60)
     # 获取最后一条assistant消息
@@ -307,4 +387,7 @@ async def synthesize():
 # echo $DASHSCOPE_API_KEY
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5001, debug=True)    
-# scp -r src root@47.106.71.193://root/bjyy/src_new ZX.9X@mT4JmWsQT
+# scp -r src root@47.106.71.193:/root/bjyy/src_new ZX.9X@mT4JmWsQT
+# curl '47.106.71.193:5001/api/agent?limit=10&order=desc'
+# curl 'https://www.bettertalker.com/api/agent?limit=10&order=desc'
+# curl -k 'https://www.bettertalker.com/api/agent?limit=10&order=desc'

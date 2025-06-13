@@ -1,3 +1,14 @@
+-- 用户表
+-- DROP TABLE agents;
+CREATE TABLE users (
+    mobile VARCHAR(20) NOT NULL PRIMARY KEY,
+    ver_code VARCHAR(20),
+    exp_at TIMESTAMP,
+    is_ver BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
 -- 智能体表
 -- DROP TABLE agents;
 CREATE TABLE agents (

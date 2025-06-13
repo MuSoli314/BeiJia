@@ -48,8 +48,8 @@ class DbPool:
             print(f"==select_data==failed: {e}")
             return None
     
-    # 插入 agents 库数据
-    async def ins_agents(self, agents_id, model, name, description):
+    # 插入 users 库数据
+    def ins_users(self, mobile, ver_code):
         max_retries = 10
         attempt = 0
 
@@ -59,23 +59,91 @@ class DbPool:
                 cursor = conn.cursor()
 
                 cursor.execute("""
-                    INSERT INTO agents (agents_id, model, name, description)
-                    VALUES (%s, %s, %s, %s)
-                    ON CONFLICT (agents_id) DO NOTHING
-                """, [agents_id, model, name, description])
+                    INSERT INTO users (mobile, ver_code, exp_at)
+                    VALUES (%s, %s, now() + interval '10 minutes')
+                    ON CONFLICT (mobile) 
+                    DO UPDATE SET 
+                            ver_code = %s, 
+                            exp_at = now() + interval '10 minutes',
+                            is_ver = FALSE
+                        WHERE users.exp_at < now()
+                """, [mobile, ver_code, ver_code])
+
+                # 提交事务
+                conn.commit()
+                affected_rows = cursor.rowcount
+                info(f"==ins_users==success: {affected_rows}")
+
+                return affected_rows
+            except Exception as e:
+                error(f"==ins_users==failed: {e}, retrying {attempt + 1}/{max_retries}")
+                attempt += 1
+                if attempt >= max_retries:
+                    error("==ins_users==failed: Maximum retry attempts reached. Aborting.")
+                    # raise SystemExit("==ins_agents==failed")
+            finally:
+                # 释放连接
+                self.pool.putconn(conn)
+    
+    # 更新用户验证状态
+    def update_user_verification(self, mobile):
+        max_retries = 10
+        attempt = 0
+
+        while attempt < max_retries:
+            try:
+                conn = self.pool.getconn()
+                cursor = conn.cursor()
+
+                cursor.execute("""
+                    UPDATE users 
+                    SET is_ver = TRUE, updated_at = CURRENT_TIMESTAMP 
+                    WHERE mobile = %s
+                """, [mobile])
+
+                # 提交事务
+                conn.commit()
+                affected_rows = cursor.rowcount
+                info(f"==update_user_verification==success: {affected_rows}")
+
+                return affected_rows
+            except Exception as e:
+                error(f"==update_user_verification==failed: {e}, retrying {attempt + 1}/{max_retries}")
+                attempt += 1
+                if attempt >= max_retries:
+                    error("==update_user_verification==failed: Maximum retry attempts reached. Aborting.")
+                    # raise SystemExit("==update_user_verification==failed")
+            finally:
+                # 释放连接
+                self.pool.putconn(conn)
+    # 插入 agents 库数据
+    def ins_agents(self, agent_id, model, audio_model, name, description):
+        max_retries = 10
+        attempt = 0
+
+        while attempt < max_retries:
+            try:
+                conn = self.pool.getconn()
+                cursor = conn.cursor()
+
+                cursor.execute("""
+                    INSERT INTO agents (agent_id, model, audio_model, name, description)
+                    VALUES (%s, %s, %s, %s, %s)
+                    ON CONFLICT (agent_id) DO NOTHING
+                """, [agent_id, model, audio_model, name, description])
 
                 # 提交事务
                 conn.commit()
                 affected_rows = cursor.rowcount
                 info(f"==ins_agents==success: {affected_rows}")
 
-                break
+                return affected_rows
             except Exception as e:
                 error(f"==ins_agents==failed: {e}, retrying {attempt + 1}/{max_retries}")
                 attempt += 1
                 if attempt >= max_retries:
                     error("==ins_agents==failed: Maximum retry attempts reached. Aborting.")
-                    raise SystemExit("==ins_agents==failed")
+                    # raise SystemExit("==ins_agents==failed")
             finally:
                 # 释放连接
                 self.pool.putconn(conn)
@@ -100,13 +168,13 @@ class DbPool:
                 affected_rows = cursor.rowcount
                 info(f"==del_agents==success: {affected_rows}")
 
-                break
+                return affected_rows
             except Exception as e:
                 error(f"==del_agents==failed: {e}, retrying {attempt + 1}/{max_retries}")
                 attempt += 1
                 if attempt >= max_retries:
                     error("==del_agents==failed: Maximum retry attempts reached. Aborting.")
-                    raise SystemExit("==del_agents==failed")
+                    # raise SystemExit("==del_agents==failed")
             finally:
                 # 释放连接
                 self.pool.putconn(conn)
@@ -146,13 +214,13 @@ class DbPool:
                 affected_rows = cursor.rowcount
                 info(f"==update_agents==success: {affected_rows}")
 
-                break
+                return affected_rows
             except Exception as e:
                 error(f"==update_agents==failed: {e}, retrying {attempt + 1}/{max_retries}")
                 attempt += 1
                 if attempt >= max_retries:
                     error("==update_agents==failed: Maximum retry attempts reached. Aborting.")
-                    raise SystemExit("==update_agents==failed")
+                    # raise SystemExit("==update_agents==failed")
             finally:
                 # 释放连接
                 self.pool.putconn(conn)
@@ -186,13 +254,13 @@ class DbPool:
                 affected_rows = cursor.rowcount
                 info(f"==ins_threads==success: {affected_rows}")
 
-                break
+                return affected_rows
             except Exception as e:
                 error(f"==ins_threads==failed: {e}, retrying {attempt + 1}/{max_retries}")
                 attempt += 1
                 if attempt >= max_retries:
                     error("==ins_threads==failed: Maximum retry attempts reached. Aborting.")
-                    raise SystemExit("==ins_threads==failed")
+                    # raise SystemExit("==ins_threads==failed")
             finally:
                 # 释放连接
                 self.pool.putconn(conn)
@@ -223,13 +291,13 @@ class DbPool:
                 affected_rows = cursor.rowcount
                 info(f"==ins_msgs==success: {affected_rows}")
 
-                break
+                return affected_rows
             except Exception as e:
                 error(f"==ins_msgs==failed: {e}, retrying {attempt + 1}/{max_retries}")
                 attempt += 1
                 if attempt >= max_retries:
                     error("==ins_msgs==failed: Maximum retry attempts reached. Aborting.")
-                    raise SystemExit("==ins_msgs==failed")
+                    # raise SystemExit("==ins_msgs==failed")
             finally:
                 # 释放连接
                 self.pool.putconn(conn)
